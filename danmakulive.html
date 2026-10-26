@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseStream • 实时弹幕互动大屏</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome Icons & Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f5ff',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              900: '#0f172a',
+            },
+            neon: {
+              cyan: '#00f3ff',
+              pink: '#ff007f',
+              purple: '#b026ff',
+              gold: '#ffd700',
+              green: '#10b981'
+            }
+          },
+          fontFamily: {
+            sans: ['"Noto Sans SC"', 'sans-serif'],
+            display: ['Outfit', '"Noto Sans SC"', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* CSS 全局与毛玻璃玻璃拟物样式 */
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      background-color: #060710;
+      color: #f3f4f6;
+      font-family: 'Noto Sans SC', sans-serif;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* 玻璃质感面板 */
+    .glass-panel {
+      background: rgba(15, 18, 33, 0.72);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+
+    .glass-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+    }
+
+    .glass-button {
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .glass-button:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
+      transform: translateY(-1px);
+    }
+
+    .glass-input {
+      background: rgba(8, 10, 20, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      backdrop-filter: blur(10px);
+    }
+
+    .glass-input:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.35);
+      outline: none;
+    }
+
+    /* 自定义滚动条 */
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    /* 点赞心型爱心漂浮动画 */
+    .heart-particle {
+      position: absolute;
+      pointer-events: none;
+      animation: floatUp 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+      font-size: 1.6rem;
+      z-index: 99;
+    }
+
+    @keyframes floatUp {
+      0% {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(0.6) rotate(0deg);
+      }
+      50% {
+        opacity: 0.95;
+        transform: translate(-50%, -100px) scale(1.4) rotate(-15deg);
+      }
+      100% {
+        opacity: 0;
+        transform: translate(-50%, -190px) scale(0.8) rotate(15deg);
+      }
+    }
+
+    /* Canvas 弹幕防闪烁图层 */
+    #danmakuCanvas {
+      pointer-events: auto;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body class="h-screen w-screen relative overflow-hidden flex flex-col justify-between">
+
+  <!-- 背景渲染 Canvas (粒子/炫彩流光) -->
+  <div id="bgCanvasContainer" class="absolute inset-0 z-0 pointer-events-none">
+    <canvas id="bgCanvas" class="w-full h-full block"></canvas>
+  </div>
+
+  <!-- 弹幕主渲染 Canvas (60FPS 极速引擎) -->
+  <div class="absolute inset-0 z-10">
+    <canvas id="danmakuCanvas" class="w-full h-full block"></canvas>
+  </div>
+
+  <!-- 顶部导航与房间管理栏 -->
+  <header class="relative z-30 p-4 md:p-5 flex items-center justify-between pointer-events-auto">
+    <!-- Logo 标志与状态指示器 -->
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-brand-600 to-neon-pink flex items-center justify-center shadow-lg shadow-brand-500/30">
+        <i class="fa-solid fa-bolt text-xl text-white"></i>
+      </div>
+      <div>
+        <h1 class="font-display font-extrabold text-lg md:text-2xl tracking-tight text-white flex items-center gap-2">
+          PulseStream
+          <span class="text-[10px] md:text-xs font-semibold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">弹幕Live</span>
+        </h1>
+        <p class="text-xs text-gray-400 flex items-center gap-1.5 mt-0.5">
+          <span id="connectionDot" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="roomStatusText" class="font-mono">房间号: 8888</span>
+        </p>
+      </div>
+    </div>
+
+    <!-- 顶部右侧控制按键 -->
+    <div class="flex items-center gap-2 md:gap-3">
+      <!-- 智能机器人 / 演示弹幕开关 -->
+      <button id="botToggleBtn" title="切换模拟机器人" class="glass-button px-3 py-2 rounded-xl text-gray-300 hover:text-white flex items-center gap-2 text-xs md:text-sm font-medium">
+        <i class="fa-solid fa-robot text-neon-cyan" id="botIcon"></i>
+        <span class="hidden md:inline" id="botStatusLabel">演示机器人: 开</span>
+      </button>
+
+      <!-- 部署上线教程模态框按钮 -->
+      <button id="deployGuideBtn" title="上线教程" class="glass-button px-3 py-2 rounded-xl text-gray-300 hover:text-white flex items-center gap-2 text-xs md:text-sm font-medium">
+        <i class="fa-solid fa-cloud-arrow-up text-neon-gold"></i>
+        <span class="hidden md:inline">公网上线</span>
+      </button>
+
+      <!-- 房间一键复制分享按钮 -->
+      <button id="shareRoomBtn" title="复制房间链接" class="glass-button px-3 py-2.5 rounded-xl text-gray-200 hover:text-white flex items-center gap-2 text-xs md:text-sm font-semibold">
+        <i class="fa-solid fa-share-nodes text-brand-400"></i>
+        <span class="hidden md:inline">邀请好友</span>
+      </button>
+
+      <!-- 设置菜单按键 -->
+      <button id="settingsToggleBtn" title="弹幕设置" class="glass-button p-2.5 rounded-xl text-gray-300 hover:text-white">
+        <i class="fa-solid fa-sliders text-base"></i>
+      </button>
+
+      <!-- 历史消息侧边栏 -->
+      <button id="historyToggleBtn" title="弹幕历史记录" class="glass-button p-2.5 rounded-xl text-gray-300 hover:text-white relative">
+        <i class="fa-solid fa-comments text-base"></i>
+        <span id="badgeCount" class="hidden absolute -top-1 -right-1 bg-neon-pink text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 提示 Toast -->
+  <div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 opacity-0 pointer-events-none transform -translate-y-4">
+    <div class="glass-panel px-4 py-2.5 rounded-2xl flex items-center gap-3 text-sm font-medium text-white shadow-2xl border border-white/20">
+      <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400"></i>
+      <span id="toastMsg">房间邀请链接已成功复制到剪贴板！</span>
+    </div>
+  </div>
+
+  <!-- 弹幕偏好设置模态框 -->
+  <div id="settingsPanel" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+    <div class="glass-panel w-full max-w-md rounded-3xl p-6 relative text-gray-200 space-y-5">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <h3 class="font-display font-bold text-lg text-white flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-brand-400"></i> 弹幕自定义偏好
+        </h3>
+        <button id="closeSettingsBtn" class="text-gray-400 hover:text-white p-1">
+          <i class="fa-solid fa-xmark text-xl"></i>
+        </button>
+      </div>
+
+      <!-- 控制开关与滑块列表 -->
+      <div class="space-y-4 text-xs md:text-sm">
+        <!-- 弹幕播放/暂停 -->
+        <div class="flex items-center justify-between">
+          <span class="font-medium text-gray-300">弹幕动画状态</span>
+          <button id="pauseDanmakuBtn" class="glass-button px-4 py-1.5 rounded-xl text-xs font-semibold text-emerald-400 flex items-center gap-2">
+            <i class="fa-solid fa-play" id="pauseIcon"></i>
+            <span id="pauseText">播放中</span>
+          </button>
+        </div>
+
+        <!-- 悬停暂停设置 -->
+        <div class="flex items-center justify-between">
+          <span class="font-medium text-gray-300">鼠标悬停弹幕时暂停</span>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="hoverPauseToggle" class="sr-only peer" checked>
+            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
+          </label>
+        </div>
+
+        <!-- 弹幕透明度 -->
+        <div>
+          <div class="flex justify-between font-medium mb-1">
+            <span class="text-gray-400">弹幕不透明度</span>
+            <span id="opacityVal" class="text-brand-400">100%</span>
+          </div>
+          <input type="range" id="opacitySlider" min="20" max="100" value="100" class="w-full accent-brand-500 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <!-- 弹幕滚动速度 -->
+        <div>
+          <div class="flex justify-between font-medium mb-1">
+            <span class="text-gray-400">弹幕飞行速度</span>
+            <span id="speedVal" class="text-brand-400">1.0x</span>
+          </div>
+          <input type="range" id="speedSlider" min="5" max="25" value="10" class="w-full accent-brand-500 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <!-- 弹幕字号缩放 -->
+        <div>
+          <div class="flex justify-between font-medium mb-1">
+            <span class="text-gray-400">字体整体缩放</span>
+            <span id="fontScaleVal" class="text-brand-400">100%</span>
+          </div>
+          <input type="range" id="fontScaleSlider" min="70" max="160" value="100" class="w-full accent-brand-500 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <!-- 背景模式选择 -->
+        <div>
+          <span class="text-gray-400 block mb-1.5 font-medium">应用背景风格</span>
+          <div class="grid grid-cols-3 gap-2">
+            <button data-bg="particles" class="bg-option-btn px-3 py-2 rounded-xl text-xs font-semibold glass-button border-brand-500 text-white">动态粒子</button>
+            <button data-bg="gradient" class="bg-option-btn px-3 py-2 rounded-xl text-xs font-semibold glass-button text-gray-400">炫彩流光</button>
+            <button data-bg="dark" class="bg-option-btn px-3 py-2 rounded-xl text-xs font-semibold glass-button text-gray-400">极简纯黑</button>
+          </div>
+        </div>
+
+        <!-- 音效开关 -->
+        <div class="flex items-center justify-between border-t border-white/10 pt-3">
+          <span class="font-medium text-gray-300">交互提示音效</span>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="soundToggle" class="sr-only peer" checked>
+            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 公网部署指引模态框 (解决跨网访问) -->
+  <div id="deployGuidePanel" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+    <div class="glass-panel w-full max-w-xl rounded-3xl p-6 relative text-gray-200 space-y-4 max-h-[85vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <h3 class="font-display font-bold text-lg text-white flex items-center gap-2">
+          <i class="fa-solid fa-rocket text-neon-pink"></i> 如何免费发布公开网址给好友？
+        </h3>
+        <button id="closeDeployBtn" class="text-gray-400 hover:text-white p-1">
+          <i class="fa-solid fa-xmark text-xl"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs md:text-sm text-gray-300 leading-relaxed">
+        <p class="text-gray-200">此网页已集成多端实时同步功能，只需将其发布到免费的云端平台上，就能获得专属域名分享给好友访问：</p>
+        
+        <div class="glass-card p-4 rounded-2xl space-y-2">
+          <div class="font-bold text-white flex items-center gap-2 text-sm">
+            <span class="w-5 h-5 rounded-full bg-brand-600 flex items-center justify-center text-xs">1</span>
+            方案一：使用 Vercel 拖拽发布（最推荐）
+          </div>
+          <ol class="list-disc list-inside space-y-1 text-gray-400 pl-2">
+            <li>把这段代码另存为 <code class="bg-black/50 text-brand-400 px-1.5 py-0.5 rounded">index.html</code> 文件；</li>
+            <li>打开 <a href="https://vercel.com" target="_blank" class="text-brand-400 underline">Vercel.com</a> 并注册登录账号；</li>
+            <li>把保存好的 html 文件夹直接拖进 Vercel 部署框，即可获得公开链接！</li>
+          </ol>
+        </div>
+
+        <div class="glass-card p-4 rounded-2xl space-y-2">
+          <div class="font-bold text-white flex items-center gap-2 text-sm">
+            <span class="w-5 h-5 rounded-full bg-neon-purple flex items-center justify-center text-xs">2</span>
+            方案二：GitHub Pages 托管
+          </div>
+          <p class="text-gray-400 pl-2">创建 GitHub 仓库并上传 <code class="bg-black/50 text-neon-purple px-1.5 py-0.5 rounded">index.html</code>，在仓库 Settings -&gt; Pages 中一键开启托管。</p>
+        </div>
+
+        <div class="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-300 text-xs flex items-center gap-2">
+          <i class="fa-solid fa-lightbulb text-base"></i>
+          提示：通过链接后的 <code class="bg-black/40 px-1 rounded">#room=你的房间号</code> 可以随时创建专属私密房间！
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 弹幕历史记录侧边抽屉 -->
+  <aside id="historyDrawer" class="fixed top-0 right-0 h-full w-80 md:w-96 glass-panel z-40 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col p-5">
+    <div class="flex items-center justify-between pb-4 border-b border-white/10 mt-16 md:mt-0">
+      <h3 class="font-display font-bold text-base text-white flex items-center gap-2">
+        <i class="fa-solid fa-clock-rotate-left text-brand-400"></i> 弹幕历史记录
+      </h3>
+      <button id="closeHistoryBtn" class="text-gray-400 hover:text-white p-1">
+        <i class="fa-solid fa-xmark text-xl"></i>
+      </button>
+    </div>
+
+    <!-- 消息列表 -->
+    <div id="historyList" class="flex-1 overflow-y-auto py-4 space-y-2.5 pr-1">
+      <div class="text-center text-gray-500 text-xs py-10">暂无弹幕历史，赶快发一条试试吧！</div>
+    </div>
+  </aside>
+
+  <!-- 中文快捷表情选择器 -->
+  <div id="emojiPicker" class="hidden absolute bottom-24 left-4 md:left-auto md:bottom-24 z-50 glass-panel p-3 rounded-2xl w-80 border border-white/15 shadow-2xl space-y-2">
+    <!-- 分类标签页 -->
+    <div class="flex items-center justify-between border-b border-white/10 pb-2 text-xs">
+      <button data-cat="hot" class="emoji-cat-btn text-brand-400 font-bold px-2 py-1 rounded">🔥 热门</button>
+      <button data-cat="happy" class="emoji-cat-btn text-gray-400 hover:text-white px-2 py-1 rounded">😂 搞怪</button>
+      <button data-cat="hype" class="emoji-cat-btn text-gray-400 hover:text-white px-2 py-1 rounded">🎉 氛围</button>
+      <button data-cat="heart" class="emoji-cat-btn text-gray-400 hover:text-white px-2 py-1 rounded">❤️ 表达</button>
+    </div>
+
+    <!-- 表情网格 -->
+    <div id="emojiGrid" class="grid grid-cols-6 gap-1.5 h-44 overflow-y-auto p-1 text-xl">
+      <!-- 动态插入表情 -->
+    </div>
+  </div>
+
+  <!-- 底部发射输入控制栏 -->
+  <footer class="relative z-30 p-4 md:p-6 w-full max-w-4xl mx-auto pointer-events-auto">
+    <div class="glass-panel p-2.5 md:p-3 rounded-3xl flex flex-col gap-2.5 border border-white/15 shadow-2xl">
+      
+      <!-- 样式选项工具栏 -->
+      <div class="flex items-center justify-between px-2 text-xs">
+        
+        <!-- 弹幕颜色选择器 -->
+        <div class="flex items-center gap-2">
+          <span class="text-gray-400 font-medium hidden sm:inline">颜色:</span>
+          <div class="flex items-center gap-1.5" id="colorPickerContainer">
+            <button data-color="#ffffff" class="color-btn w-5 h-5 rounded-full bg-white border-2 border-white scale-110 transition-transform" title="纯白"></button>
+            <button data-color="#00f3ff" class="color-btn w-5 h-5 rounded-full bg-neon-cyan border-2 border-transparent hover:scale-110 transition-transform" title="荧光青"></button>
+            <button data-color="#ff007f" class="color-btn w-5 h-5 rounded-full bg-neon-pink border-2 border-transparent hover:scale-110 transition-transform" title="霓虹粉"></button>
+            <button data-color="#b026ff" class="color-btn w-5 h-5 rounded-full bg-neon-purple border-2 border-transparent hover:scale-110 transition-transform" title="幻彩紫"></button>
+            <button data-color="#ffd700" class="color-btn w-5 h-5 rounded-full bg-neon-gold border-2 border-transparent hover:scale-110 transition-transform" title="帝皇金"></button>
+            <button data-color="#10b981" class="color-btn w-5 h-5 rounded-full bg-emerald-500 border-2 border-transparent hover:scale-110 transition-transform" title="翡翠绿"></button>
+          </div>
+        </div>
+
+        <!-- 弹幕字号与轨迹模式 -->
+        <div class="flex items-center gap-2 sm:gap-4">
+          <!-- 字号 -->
+          <div class="flex items-center bg-black/40 rounded-xl p-0.5 border border-white/10">
+            <button data-size="small" class="size-btn px-2 py-0.5 rounded-lg text-[11px] text-gray-400 font-semibold">小</button>
+            <button data-size="normal" class="size-btn px-2 py-0.5 rounded-lg text-[11px] text-white bg-brand-600 font-semibold">中</button>
+            <button data-size="large" class="size-btn px-2 py-0.5 rounded-lg text-[11px] text-gray-400 font-semibold">大</button>
+          </div>
+
+          <!-- 模式 -->
+          <div class="flex items-center bg-black/40 rounded-xl p-0.5 border border-white/10">
+            <button data-mode="scroll" title="滚动弹幕" class="mode-btn px-2 py-0.5 rounded-lg text-white bg-brand-600 font-semibold">
+              <i class="fa-solid fa-arrows-left-right text-[10px]"></i> 滚动
+            </button>
+            <button data-mode="top" title="顶部固定" class="mode-btn px-2 py-0.5 rounded-lg text-gray-400 font-semibold">
+              <i class="fa-solid fa-align-center text-[10px]"></i> 顶固
+            </button>
+            <button data-mode="bottom" title="底部固定" class="mode-btn px-2 py-0.5 rounded-lg text-gray-400 font-semibold">
+              <i class="fa-solid fa-grip-lines text-[10px]"></i> 底固
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 发射输入框与按钮 -->
+      <form id="danmakuForm" class="flex items-center gap-2">
+        <!-- 表情弹窗切换按钮 -->
+        <button type="button" id="emojiPickerBtn" class="glass-button w-11 h-11 rounded-2xl flex items-center justify-center text-lg text-yellow-400 hover:scale-105 transition-transform flex-shrink-0">
+          😊
+        </button>
+
+        <!-- 消息输入区域 -->
+        <div class="relative flex-1">
+          <input type="text" id="danmakuInput" maxlength="60" placeholder="发条弹幕参与互动吧 (按 Enter 发送)..." autocomplete="off" class="glass-input w-full h-11 px-4 rounded-2xl text-white placeholder-gray-400 text-sm md:text-base font-medium">
+        </div>
+
+        <!-- 发送按键 -->
+        <button type="submit" class="h-11 px-5 rounded-2xl bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] flex-shrink-0">
+          <span>发射</span>
+          <i class="fa-solid fa-paper-plane text-xs"></i>
+        </button>
+      </form>
+    </div>
+  </footer>
+
+  <!-- Firebase 实时同步 SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // ------------------------------------------------------------------
+    // 全局状态与配置
+    // ------------------------------------------------------------------
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'danmaku-live-app';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' 
+      ? JSON.parse(__firebase_config)
+      : {
+          apiKey: "AIzaSyDummyKeyForFallbackTestingOnly",
+          authDomain: "demo-app.firebaseapp.com",
+          projectId: "demo-app",
+          storageBucket: "demo-app.appspot.com",
+          messagingSenderId: "123456789",
+          appId: "1:123456789:web:abcdef"
+        };
+
+    let app, auth, db;
+    let currentUser = null;
+    let currentRoomId = '8888';
+
+    // 弹幕系统配置参数
+    const config = {
+      color: '#ffffff',
+      size: 'normal',
+      mode: 'scroll',
+      bgMode: 'particles',
+      paused: false,
+      hoverPause: true,
+      opacity: 1.0,
+      speedFactor: 1.0,
+      fontScale: 1.0,
+      soundEnabled: true,
+      botEnabled: true
+    };
+
+    // 中文表情包库
+    const EMOJI_CATALOG = {
+      hot: ['🔥', '✨', '🎉', '🚀', '❤️', '😂', '👍', '🌟', '⚡', '💯', '👏', '😍'],
+      happy: ['🤣', '😮', '🤯', '😭', '💀', '🤡', '🤔', '👀', '😎', '🫠', '😴', '💩'],
+      hype: ['🥳', '🍾', '🎆', '💃', '🕺', '👑', '💥', '🏆', '🎯', '🎸', '📢', '🙌'],
+      heart: ['❤️', '💖', '💗', '💓', '💘', '💙', '💜', '💚', '💛', '🤍', '🤎', '❣️']
+    };
+
+    // 音效合成系统 (Web Audio API)
+    function playPopSound(freq = 520) {
+      if (!config.soundEnabled) return;
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.6, audioCtx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.08);
+      } catch (e) { /* 忽略无交互播放限制 */ }
+    }
+
+    // ------------------------------------------------------------------
+    // 第一轮优化：高性能 HTML5 Canvas 60FPS 弹幕引擎 + 对象池 (Object Pooling)
+    // ------------------------------------------------------------------
+    const dCanvas = document.getElementById('danmakuCanvas');
+    const dCtx = dCanvas.getContext('2d');
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+
+    function resizeDanmakuCanvas() {
+      canvasWidth = window.innerWidth;
+      canvasHeight = window.innerHeight;
+      dCanvas.width = canvasWidth * window.devicePixelRatio;
+      dCanvas.height = canvasHeight * window.devicePixelRatio;
+      dCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    }
+    window.addEventListener('resize', resizeDanmakuCanvas);
+    resizeDanmakuCanvas();
+
+    // 弹幕数据结构定义
+    class DanmakuItem {
+      constructor() {
+        this.reset();
+      }
+      reset() {
+        this.active = false;
+        this.text = '';
+        this.color = '#ffffff';
+        this.fontSize = 24;
+        this.mode = 'scroll';
+        this.x = 0;
+        this.y = 0;
+        this.speed = 0;
+        this.width = 0;
+        this.duration = 0;
+        this.elapsed = 0;
+      }
+    }
+
+    // 第二轮优化：对象池设计防止频繁垃圾回收与卡顿
+    class DanmakuPool {
+      constructor(size = 100) {
+        this.pool = Array.from({ length: size }, () => new DanmakuItem());
+      }
+      get() {
+        let item = this.pool.find(i => !i.active);
+        if (!item) {
+          item = new DanmakuItem();
+          this.pool.push(item);
+        }
+        item.active = true;
+        return item;
+      }
+    }
+
+    const danmakuPool = new DanmakuPool(120);
+    const activeDanmakuList = [];
+    const TRACK_COUNT = 10;
+    const trackLastX = new Array(TRACK_COUNT).fill(-9999);
+
+    function getFontSizePx(sizeKey) {
+      const base = sizeKey === 'small' ? 18 : sizeKey === 'large' ? 32 : 24;
+      return base * config.fontScale;
+    }
+
+    function spawnDanmaku(data) {
+      if (config.paused) return;
+
+      const item = danmakuPool.get();
+      item.text = data.text;
+      item.color = data.color || '#ffffff';
+      item.mode = data.mode || 'scroll';
+      item.fontSize = getFontSizePx(data.size || 'normal');
+      item.elapsed = 0;
+
+      // 预测量弹幕宽度
+      dCtx.font = `bold ${item.fontSize}px "Noto Sans SC", sans-serif`;
+      item.width = dCtx.measureText(item.text).width + 20;
+
+      if (item.mode === 'scroll') {
+        // 自动防重叠轨道计算 (Track System)
+        let bestTrack = 0;
+        let minOverlapX = Infinity;
+        for (let i = 0; i < TRACK_COUNT; i++) {
+          if (trackLastX[i] < minOverlapX) {
+            minOverlapX = trackLastX[i];
+            bestTrack = i;
+          }
+        }
+
+        const trackHeight = (canvasHeight * 0.6) / TRACK_COUNT;
+        item.y = 70 + (bestTrack * trackHeight) + (trackHeight / 2);
+        item.x = canvasWidth;
+        item.speed = (canvasWidth + item.width) / (6000 / config.speedFactor);
+        trackLastX[bestTrack] = canvasWidth + item.width + 80;
+
+      } else {
+        // 顶固与底固模式
+        item.x = canvasWidth / 2;
+        item.y = item.mode === 'top' 
+          ? 90 + (Math.random() * (canvasHeight * 0.25))
+          : canvasHeight - 130 - (Math.random() * (canvasHeight * 0.2));
+        item.duration = 3500;
+      }
+
+      activeDanmakuList.push(item);
+    }
+
+    // 鼠标悬停暂停判定变量
+    let isHoveringDanmaku = false;
+    dCanvas.addEventListener('mousemove', (e) => {
+      if (!config.hoverPause) {
+        isHoveringDanmaku = false;
+        return;
+      }
+      const mx = e.clientX;
+      const my = e.clientY;
+      isHoveringDanmaku = activeDanmakuList.some(item => {
+        if (!item.active || item.mode !== 'scroll') return false;
+        return mx >= item.x && mx <= item.x + item.width && Math.abs(my - item.y) < 20;
+      });
+    });
+
+    dCanvas.addEventListener('click', (e) => {
+      spawnHeartParticle(e.clientX, e.clientY);
+      playPopSound(700);
+    });
+
+    // 60FPS 渲染循环
+    let lastTime = performance.now();
+    function renderLoop(currentTime) {
+      const delta = currentTime - lastTime;
+      lastTime = currentTime;
+
+      dCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+      // 更新轨道状态
+      for (let i = 0; i < TRACK_COUNT; i++) {
+        if (trackLastX[i] > -9999) trackLastX[i] -= 0.15 * delta;
+      }
+
+      const shouldUpdate = !config.paused && (!config.hoverPause || !isHoveringDanmaku);
+
+      for (let i = activeDanmakuList.length - 1; i >= 0; i--) {
+        const item = activeDanmakuList[i];
+        if (!item.active) continue;
+
+        if (shouldUpdate) {
+          if (item.mode === 'scroll') {
+            item.x -= item.speed * (delta / 16.6);
+            if (item.x < -item.width) {
+              item.active = false;
+              activeDanmakuList.splice(i, 1);
+              continue;
+            }
+          } else {
+            item.elapsed += delta;
+            if (item.elapsed >= item.duration) {
+              item.active = false;
+              activeDanmakuList.splice(i, 1);
+              continue;
+            }
+          }
+        }
+
+        // 绘制弹幕文字
+        dCtx.save();
+        dCtx.globalAlpha = config.opacity;
+        dCtx.font = `bold ${item.fontSize}px "Noto Sans SC", sans-serif`;
+        dCtx.textAlign = item.mode === 'scroll' ? 'left' : 'center';
+        dCtx.textBaseline = 'middle';
+
+        // 发光与黑色描边（提高背景可读性）
+        dCtx.shadowColor = item.color;
+        dCtx.shadowBlur = 10;
+        dCtx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+        dCtx.lineWidth = 4;
+        dCtx.strokeText(item.text, item.x, item.y);
+
+        dCtx.fillStyle = item.color;
+        dCtx.fillText(item.text, item.x, item.y);
+        dCtx.restore();
+      }
+
+      requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    // ------------------------------------------------------------------
+    // 背景 Canvas (动态粒子与流光)
+    // ------------------------------------------------------------------
+    const bgCanvas = document.getElementById('bgCanvas');
+    const bgCtx = bgCanvas.getContext('2d');
+    let particles = [];
+
+    function resizeBgCanvas() {
+      bgCanvas.width = window.innerWidth;
+      bgCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeBgCanvas);
+    resizeBgCanvas();
+
+    class Particle {
+      constructor() {
+        this.reset();
+      }
+      reset() {
+        this.x = Math.random() * bgCanvas.width;
+        this.y = Math.random() * bgCanvas.height;
+        this.radius = Math.random() * 2 + 0.8;
+        this.color = ['#3b82f6', '#00f3ff', '#ff007f', '#b026ff'][Math.floor(Math.random() * 4)];
+        this.vx = (Math.random() - 0.5) * 0.7;
+        this.vy = (Math.random() - 0.5) * 0.7;
+        this.alpha = Math.random() * 0.6 + 0.2;
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        if (this.x < 0 || this.x > bgCanvas.width || this.y < 0 || this.y > bgCanvas.height) {
+          this.reset();
+        }
+      }
+      draw() {
+        bgCtx.save();
+        bgCtx.globalAlpha = this.alpha;
+        bgCtx.fillStyle = this.color;
+        bgCtx.shadowBlur = 8;
+        bgCtx.shadowColor = this.color;
+        bgCtx.beginPath();
+        bgCtx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        bgCtx.fill();
+        bgCtx.restore();
+      }
+    }
+
+    for (let i = 0; i < 50; i++) particles.push(new Particle());
+
+    function renderBg() {
+      bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+
+      if (config.bgMode === 'particles') {
+        const grad = bgCtx.createLinearGradient(0, 0, bgCanvas.width, bgCanvas.height);
+        grad.addColorStop(0, '#060712');
+        grad.addColorStop(0.5, '#0a0d1f');
+        grad.addColorStop(1, '#0c071a');
+        bgCtx.fillStyle = grad;
+        bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
+        particles.forEach(p => { p.update(); p.draw(); });
+
+      } else if (config.bgMode === 'gradient') {
+        const time = Date.now() * 0.0008;
+        const grad = bgCtx.createRadialGradient(
+          bgCanvas.width / 2, bgCanvas.height / 2, 50,
+          bgCanvas.width / 2, bgCanvas.height / 2, bgCanvas.width
+        );
+        grad.addColorStop(0, '#1e1b4b');
+        grad.addColorStop(0.5, '#0f172a');
+        grad.addColorStop(1, '#020617');
+        bgCtx.fillStyle = grad;
+        bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
+
+      } else {
+        bgCtx.fillStyle = '#060710';
+        bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
+      }
+
+      requestAnimationFrame(renderBg);
+    }
+    renderBg();
+
+    // 心型粒子生成
+    function spawnHeartParticle(x, y) {
+      const heart = document.createElement('div');
+      heart.className = 'heart-particle';
+      heart.innerHTML = ['❤️', '💖', '✨', '🔥', '💙'][Math.floor(Math.random() * 5)];
+      heart.style.left = `${x}px`;
+      heart.style.top = `${y}px`;
+      document.body.appendChild(heart);
+      setTimeout(() => heart.remove(), 1200);
+    }
+
+    // ------------------------------------------------------------------
+    // 第三轮优化：网络实时多端同步 + 智能演示机器人兼容模式
+    // ------------------------------------------------------------------
+    async function initFirebase() {
+      try {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+
+        // 获取或解析 Hash 中的房间号 (#room=1234)
+        const hashMatch = window.location.hash.match(/room=([^&]+)/);
+        if (hashMatch) {
+          currentRoomId = hashMatch[1];
+        }
+        document.getElementById('roomStatusText').textContent = `房间号: ${currentRoomId}`;
+
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+        currentUser = auth.currentUser;
+
+        subscribeToRoomMessages();
+
+      } catch (err) {
+        console.warn("未检测到有效网络后端，切换为演示模式:", err);
+      }
+    }
+
+    function subscribeToRoomMessages() {
+      if (!db) return;
+      const messagesCol = collection(db, 'artifacts', appId, 'public', 'data', `room_${currentRoomId}`);
+
+      onSnapshot(messagesCol, (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const data = change.doc.data();
+            if (data && data.text) {
+              spawnDanmaku(data);
+              addMessageToHistory(data);
+              playPopSound(800);
+            }
+          }
+        });
+      }, (error) => console.error("Firestore 订阅异常:", error));
+    }
+
+    async function sendDanmakuMessage(text) {
+      if (!text.trim()) return;
+
+      const payload = {
+        text: text.trim(),
+        color: config.color,
+        size: config.size,
+        mode: config.mode,
+        senderId: currentUser ? currentUser.uid : 'local',
+        timestamp: Date.now()
+      };
+
+      if (db) {
+        try {
+          const messagesCol = collection(db, 'artifacts', appId, 'public', 'data', `room_${currentRoomId}`);
+          await addDoc(messagesCol, payload);
+        } catch (e) {
+          spawnDanmaku(payload);
+          addMessageToHistory(payload);
+        }
+      } else {
+        spawnDanmaku(payload);
+        addMessageToHistory(payload);
+      }
+    }
+
+    // 智能模拟机器人 (模拟多线互动氛围)
+    const DEMO_PRESETS = [
+      "前方高能！！！", "太帅了吧这个界面！", "666666666", "哈老铁们大家晚上好",
+      "今天也是元气满满的一天 🚀", "好炫酷的弹幕效果！", "大佬带带我 🔥", 
+      "这弹幕根本停不下来！🎉", "点赞点赞点赞 ❤️", "祝大家全家幸福！"
+    ];
+
+    let botInterval = null;
+    function startBot() {
+      if (botInterval) clearInterval(botInterval);
+      botInterval = setInterval(() => {
+        if (!config.botEnabled || config.paused) return;
+        const randomText = DEMO_PRESETS[Math.floor(Math.random() * DEMO_PRESETS.length)];
+        const randomColor = ['#ffffff', '#00f3ff', '#ff007f', '#ffd700', '#10b981'][Math.floor(Math.random() * 5)];
+        const payload = {
+          text: randomText,
+          color: randomColor,
+          size: Math.random() > 0.8 ? 'large' : 'normal',
+          mode: Math.random() > 0.85 ? 'top' : 'scroll',
+          timestamp: Date.now()
+        };
+        spawnDanmaku(payload);
+        addMessageToHistory(payload);
+      }, 2800);
+    }
+    startBot();
+
+    // ------------------------------------------------------------------
+    // UI 交互控制逻辑
+    // ------------------------------------------------------------------
+    const historyList = document.getElementById('historyList');
+    const badgeCount = document.getElementById('badgeCount');
+    let unreadCount = 0;
+
+    function addMessageToHistory(data) {
+      if (historyList.children.length === 1 && historyList.children[0].textContent.includes('暂无弹幕')) {
+        historyList.innerHTML = '';
+      }
+
+      const msgEl = document.createElement('div');
+      msgEl.className = 'glass-card p-2.5 rounded-2xl flex items-start gap-2 text-xs border border-white/10';
+      msgEl.innerHTML = `
+        <div class="w-2.5 h-2.5 rounded-full mt-1 flex-shrink-0" style="background-color: ${data.color}"></div>
+        <div class="flex-1 overflow-hidden">
+          <div class="flex items-center justify-between text-gray-400 text-[10px] mb-0.5">
+            <span>${data.mode === 'scroll' ? '滚动' : data.mode === 'top' ? '顶固' : '底固'}</span>
+            <span>${new Date(data.timestamp || Date.now()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+          </div>
+          <p class="text-white font-medium break-words text-sm">${escapeHTML(data.text)}</p>
+        </div>
+      `;
+      historyList.prepend(msgEl);
+
+      const drawer = document.getElementById('historyDrawer');
+      if (drawer.classList.contains('translate-x-full')) {
+        unreadCount++;
+        badgeCount.textContent = unreadCount;
+        badgeCount.classList.remove('hidden');
+      }
+    }
+
+    function escapeHTML(str) {
+      return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+    }
+
+    // 表单提交
+    document.getElementById('danmakuForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('danmakuInput');
+      if (input.value.trim()) {
+        sendDanmakuMessage(input.value);
+        input.value = '';
+        playPopSound(580);
+      }
+    });
+
+    // 机器人开关
+    document.getElementById('botToggleBtn').addEventListener('click', () => {
+      config.botEnabled = !config.botEnabled;
+      const label = document.getElementById('botStatusLabel');
+      const icon = document.getElementById('botIcon');
+      if (config.botEnabled) {
+        label.textContent = "演示机器人: 开";
+        icon.className = "fa-solid fa-robot text-neon-cyan";
+        showToast("模拟机器人已开启");
+      } else {
+        label.textContent = "演示机器人: 关";
+        icon.className = "fa-solid fa-robot text-gray-500";
+        showToast("模拟机器人已关闭");
+      }
+    });
+
+    // 颜色选择器
+    document.querySelectorAll('.color-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('scale-110', 'border-white'));
+        btn.classList.add('scale-110', 'border-white');
+        config.color = btn.dataset.color;
+        playPopSound(300);
+      });
+    });
+
+    // 字号选择器
+    document.querySelectorAll('.size-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.size-btn').forEach(b => {
+          b.classList.remove('bg-brand-600', 'text-white');
+          b.classList.add('text-gray-400');
+        });
+        btn.classList.add('bg-brand-600', 'text-white');
+        btn.classList.remove('text-gray-400');
+        config.size = btn.dataset.size;
+        playPopSound(350);
+      });
+    });
+
+    // 模式选择器
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.mode-btn').forEach(b => {
+          b.classList.remove('bg-brand-600', 'text-white');
+          b.classList.add('text-gray-400');
+        });
+        btn.classList.add('bg-brand-600', 'text-white');
+        btn.classList.remove('text-gray-400');
+        config.mode = btn.dataset.mode;
+        playPopSound(400);
+      });
+    });
+
+    // 表情选择器
+    const emojiPicker = document.getElementById('emojiPicker');
+    const emojiGrid = document.getElementById('emojiGrid');
+
+    function renderEmojiCategory(catKey) {
+      const emojis = EMOJI_CATALOG[catKey] || EMOJI_CATALOG.hot;
+      emojiGrid.innerHTML = emojis.map(e => `
+        <button class="emoji-item hover:bg-white/10 p-1.5 rounded-xl transition-transform hover:scale-125">${e}</button>
+      `).join('');
+
+      document.querySelectorAll('.emoji-item').forEach(b => {
+        b.addEventListener('click', () => {
+          const input = document.getElementById('danmakuInput');
+          input.value += b.textContent;
+          playPopSound(450);
+        });
+      });
+    }
+    renderEmojiCategory('hot');
+
+    document.getElementById('emojiPickerBtn').addEventListener('click', () => {
+      emojiPicker.classList.toggle('hidden');
+    });
+
+    document.querySelectorAll('.emoji-cat-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.emoji-cat-btn').forEach(b => b.classList.replace('text-brand-400', 'text-gray-400'));
+        btn.classList.replace('text-gray-400', 'text-brand-400');
+        renderEmojiCategory(btn.dataset.cat);
+      });
+    });
+
+    // 偏好设置模态框
+    const settingsPanel = document.getElementById('settingsPanel');
+    document.getElementById('settingsToggleBtn').addEventListener('click', () => settingsPanel.classList.remove('hidden'));
+    document.getElementById('closeSettingsBtn').addEventListener('click', () => settingsPanel.classList.add('hidden'));
+
+    // 部署教程模态框
+    const deployGuidePanel = document.getElementById('deployGuidePanel');
+    document.getElementById('deployGuideBtn').addEventListener('click', () => deployGuidePanel.classList.remove('hidden'));
+    document.getElementById('closeDeployBtn').addEventListener('click', () => deployGuidePanel.classList.add('hidden'));
+
+    // 偏好设置滑块事件
+    document.getElementById('pauseDanmakuBtn').addEventListener('click', () => {
+      config.paused = !config.paused;
+      document.getElementById('pauseText').textContent = config.paused ? '已暂停' : '播放中';
+      document.getElementById('pauseIcon').className = config.paused ? 'fa-solid fa-pause' : 'fa-solid fa-play';
+    });
+
+    document.getElementById('hoverPauseToggle').addEventListener('change', (e) => config.hoverPause = e.target.checked);
+    document.getElementById('opacitySlider').addEventListener('input', (e) => {
+      config.opacity = e.target.value / 100;
+      document.getElementById('opacityVal').textContent = `${e.target.value}%`;
+    });
+    document.getElementById('speedSlider').addEventListener('input', (e) => {
+      config.speedFactor = e.target.value / 10;
+      document.getElementById('speedVal').textContent = `${config.speedFactor.toFixed(1)}x`;
+    });
+    document.getElementById('fontScaleSlider').addEventListener('input', (e) => {
+      config.fontScale = e.target.value / 100;
+      document.getElementById('fontScaleVal').textContent = `${e.target.value}%`;
+    });
+    document.getElementById('soundToggle').addEventListener('change', (e) => config.soundEnabled = e.target.checked);
+
+    document.querySelectorAll('.bg-option-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.bg-option-btn').forEach(b => {
+          b.classList.remove('border-brand-500', 'text-white');
+          b.classList.add('text-gray-400');
+        });
+        btn.classList.add('border-brand-500', 'text-white');
+        btn.classList.remove('text-gray-400');
+        config.bgMode = btn.dataset.bg;
+      });
+    });
+
+    // 邀请好友一键复制链接
+    document.getElementById('shareRoomBtn').addEventListener('click', () => {
+      const shareUrl = `${window.location.origin}${window.location.pathname}#room=${currentRoomId}`;
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        showToast('房间链接已复制，发给好友即可加入互动！');
+      }).catch(() => {
+        showToast(`你的房间号为: ${currentRoomId}`);
+      });
+    });
+
+    // 历史侧边栏切换
+    const historyDrawer = document.getElementById('historyDrawer');
+    document.getElementById('historyToggleBtn').addEventListener('click', () => {
+      historyDrawer.classList.remove('translate-x-full');
+      unreadCount = 0;
+      badgeCount.classList.add('hidden');
+    });
+    document.getElementById('closeHistoryBtn').addEventListener('click', () => {
+      historyDrawer.classList.add('translate-x-full');
+    });
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toastMsg').textContent = msg;
+      toast.classList.remove('opacity-0', '-translate-y-4', 'pointer-events-none');
+      setTimeout(() => {
+        toast.classList.add('opacity-0', '-translate-y-4', 'pointer-events-none');
+      }, 2500);
+    }
+
+    // 初始化 App
+    initFirebase();
+  </script>
+</body>
+</html>
